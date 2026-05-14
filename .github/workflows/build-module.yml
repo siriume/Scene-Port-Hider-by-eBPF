@@ -3,6 +3,16 @@ name: Build KernelSU module
 on:
   workflow_dispatch:
     inputs:
+      target_device:
+        description: "Select target device (must exist in btf/ folder)"
+        required: true
+        type: choice
+        options:
+          - all
+          - mi_13u
+          - redmi_k90pm
+          - oneplus_15
+        default: "all"
       create_release:
         description: "Create a GitHub Release after building"
         required: true
@@ -44,7 +54,6 @@ jobs:
           BPFTOOL_PATH="$(find "$RUNNER_TEMP/bpftool" -type f -name bpftool | head -n 1)"
           chmod +x "$BPFTOOL_PATH"
           echo "BPFTOOL=$BPFTOOL_PATH" >> "$GITHUB_ENV"
-          "$BPFTOOL_PATH" version
 
       - name: Cache Android arm64 dependencies
         uses: actions/cache@v4
@@ -54,18 +63,24 @@ jobs:
 
       - name: Build module from BTF
         run: |
-          bash tools/build_from_btf.sh
+          # 获取输入参数，如果是 push tag 触发则默认跑 all
+          TARGET="${{ github.event.inputs.target_device || 'all' }}"
+          echo "Building for target: $TARGET"
+          bash tools/build_from_btf.sh "$TARGET"
 
-      - name: Stage module zip
+      - name: Stage module zips
         run: |
-          cp ../hideSceneport_module.zip ./hideSceneport_module.zip
-          ls -lh ./hideSceneport_module.zip
+          # 将所有生成的设备特定 zip 移动到当前目录以便上传
+          # 假设脚本中使用了 mv ... hideSceneport_module_${device_name}.zip
+          mkdir -p ./output
+          cp ../hideSceneport_module*.zip ./output/
+          ls -lh ./output/
 
-      - name: Upload module zip
+      - name: Upload module artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ScenePortHider_Release
-          path: hideSceneport_module.zip
+          name: ScenePortHider_Builds
+          path: ./output/hideSceneport_module*.zip
           if-no-files-found: error
 
       - name: Create GitHub Release
@@ -76,8 +91,12 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Scene Port Hider by eBPF ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
           body: |
-            KernelSU module built by GitHub Actions.
-
+            KernelSU modules built by GitHub Actions.
             This package is tied to the target kernel BTF committed in this repository.
             For other devices or kernels, fork the repository and rebuild with that device's BTF.
-          files: hideSceneport_module.zip
+            
+            Target: ${{ github.event.inputs.target_device || 'All tags' }}
+            
+            Included files are compiled against specific kernel BTF structures provided in the repository.
+          # 使用通配符，Action 会自动将目录下所有符合条件的 zip 分别作为附件上传到同一个 Release
+          files: ./output/hideSceneport_module*.zip
